@@ -1,0 +1,7 @@
+# Compiled files
+*.o
+
+# MACOS related files
+.DS_Store
+compile_commands.json
+.cache/
