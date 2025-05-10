@@ -2,17 +2,20 @@
 
 // STD Includes //
 #include <thread>
+#include <string>
 
 class Client {
     private:
         int _socket;
-        std::thread _thread;
         std::string _username;
+        std::thread _thread;
+    
     public:
-        int getClientSocket() const {return _socket;};
-        const std::string& getUsername() { return _username; }
-        std::thread& getClientThread() {return _thread;};
-        
-        void setClientSocket(int socket) {_socket = socket;};
-        void setUsername(const std::string& username) { _username = username; }
+        Client(int socket, const std::string& username = "");
+    
+        int getClientSocket() const;
+        const std::string& getUsername() const;
+        std::thread& getClientThread();
+    
+        void setUsername(const std::string& username);
 };

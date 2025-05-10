@@ -1,5 +1,6 @@
 // Header Includes //
 #include "server.hpp"
+#include "packetSerializer.hpp"
 
 // STD Includes //
 #include <thread>
@@ -38,18 +39,17 @@ Server::Server(int port) : _port(port), _running(true) {
     address.sin_port = htons(_port);
 
     if (bind(_serverSocket, (sockaddr*)&address, sizeof(address)) < 0) {
-        std::cout << ("[SERVER] Socket bind failed") << std::endl;
+        std::cout << "[SERVER] Socket bind failed" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     if (listen(_serverSocket, 10) < 0) {
-        std::cout << ("[SERVER] Socket listening failed") << std::endl;
+        std::cout << "[SERVER] Socket listening failed" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     std::cout << "[SERVER] Listening on port " << _port << "...\n";
 }
-
 
 void Server::run() {
     acceptClients();
@@ -66,58 +66,63 @@ void Server::acceptClients() {
             continue;
         }
 
-        Client client;
-        client.setClientSocket(clientSocket);
+        Client client(clientSocket);
 
         {
             std::lock_guard<std::mutex> lock(_clientMutex);
             _clients.push_back(std::move(client));
             Client* clientPtr = &_clients.back();
+
             clientPtr->getClientThread() = std::thread(&Server::handleClient, this, clientPtr);
             clientPtr->getClientThread().detach();
         }
-        
+
         if (_running) {
             std::cout << "[SERVER] Client connected.\n";
         }
     }
 }
 
+
 void Server::handleClient(Client* client) {
     int clientSocket = client->getClientSocket();
     char buffer[1024];
     std::memset(buffer, 0, sizeof(buffer));
+
     int nameLen = read(clientSocket, buffer, sizeof(buffer));
-    
     if (nameLen <= 0) {
         close(clientSocket);
         return;
     }
-    
+
     std::string username(buffer);
     username.erase(std::remove(username.begin(), username.end(), '\n'), username.end());
     client->setUsername(username);
 
     std::cout << "[SERVER] User connected: " << username << "\n";
 
+    std::vector<uint8_t> fragmentBuffer;
+    std::string messageBuffer;
+    bool complete = false;
+
     while (_running) {
         std::memset(buffer, 0, sizeof(buffer));
         int bytesRead = read(clientSocket, buffer, sizeof(buffer));
-        
+
         if (bytesRead <= 0) {
             break;
         }
 
-        std::string message(buffer);
-        message.erase(std::remove(message.begin(), message.end(), '\n'), message.end());
+        fragmentBuffer.insert(fragmentBuffer.end(), buffer, buffer + bytesRead);
 
-        if (message == "exit") {
-            break;
+        while (PacketSerializer::deserialize(fragmentBuffer, messageBuffer, complete)) {
+            if (complete) {
+                std::string broadcastMsg = "[" + username + "]: " + messageBuffer + "\n";
+                std::cout << broadcastMsg;
+                broadcastMessage(broadcastMsg, clientSocket);
+                messageBuffer.clear();
+            }
         }
-        
-        std::string broadcastMsg = "[" + username + "]: " + message + "\n";
-        std::cout << broadcastMsg;
-        broadcastMessage(broadcastMsg, clientSocket);
     }
 
     close(clientSocket);
@@ -137,7 +142,10 @@ void Server::broadcastMessage(const std::string& message, int senderSocket) {
     std::lock_guard<std::mutex> lock(_clientMutex);
     for (Client& client : _clients) {
         if (client.getClientSocket() != senderSocket) {
-            send(client.getClientSocket(), message.c_str(), message.size(), 0);
+            auto packets = PacketSerializer::serialize(message);
+            for (const auto& packet : packets) {
+                send(client.getClientSocket(), packet.data(), packet.size(), 0);
+            }
         }
     }
 }
